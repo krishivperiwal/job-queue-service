@@ -35,6 +35,19 @@ Distributed TypeScript job-processing system for submitting, queueing, retrying,
 - `POST /jobs/:id/replay` - replay a failed job
 - `GET /queue-depth` - read the Redis queue-depth counter
 
+## Design Notes
+
+- Job submission is decoupled from processing via SQS — the API never blocks on background work
+- PostgreSQL owns durable job state; SQS owns delivery and retry semantics
+- Long polling reduces empty-receive API calls to SQS
+- `ApproximateReceiveCount` distinguishes an in-progress retry from a final failure
+- Job claiming is atomic (`UPDATE ... WHERE status IN (...) RETURNING *`), making duplicate SQS delivery a no-op instead of a double-processing bug
+- A background reconciler sweeps for jobs stuck in `pending` (DB insert succeeded, SQS publish failed) and republishes them, using `SELECT ... FOR UPDATE SKIP LOCKED` so multiple worker instances never republish the same job twice
+- Redis queue-depth counter is kept accurate via atomic `INCR`/`DECR` on every job state transition (submit, complete, fail, replay) — no read-modify-write
+- Worker's poll loop wraps message handling in try/catch so a transient AWS/network failure doesn't silently kill the polling process
+- Malformed SQS message bodies are caught, logged, and deleted rather than crashing message handling
+- Both services validate required environment variables at startup and exit immediately with a clear error if any are missing, instead of failing silently on first use
+
 ## Run Locally
 
 Start PostgreSQL and Redis:
@@ -69,6 +82,9 @@ The dashboard runs at `http://localhost:5173` and the API runs at `http://localh
 - `SQS_QUEUE_URL` - SQS queue URL
 - `PORT` - API port; defaults to `3000`
 
-## Current Scope
+## Known Limitations
 
-The worker currently simulates thumbnail processing with a short delay and stores a placeholder result. Real image downloading, resizing, storage, authentication, automated tests, and production observability are not yet implemented.
+- Thumbnail generation is currently simulated (no real image downloading, resizing, or storage yet)
+- No authentication, authorization, or rate limiting
+- No automated tests
+- No production observability (metrics, structured logging, alerting)
