@@ -27,7 +27,8 @@ export async function query<T = unknown>(
 export async function claimJob(jobId: string): Promise<Job | null> {
   const rows = await query<Job>(
     `UPDATE jobs
-     SET status = 'processing', updated_at = now()
+      SET status = 'processing', attempts = attempts + 1,
+          next_attempt_at = now() + interval '180 seconds', updated_at = now()
      WHERE id = $1 AND status IN ('pending', 'failed')
      RETURNING *`,
     [jobId]

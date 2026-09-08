@@ -23,18 +23,77 @@ async function decrementQueueDepth(): Promise<void> {
   }
 }
 
-async function markCompleted(jobId: string): Promise<void> {
+interface ImageValidationResult {
+  content_type: string;
+  content_length?: number;
+}
+
+async function requestImage(url: string, method: 'HEAD' | 'GET'): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 5_000);
+
+  try {
+    return await fetch(url, {
+      method,
+      redirect: 'follow',
+      signal: controller.signal,
+    });
+  } catch (err) {
+    if (err instanceof DOMException && err.name === 'AbortError') {
+      throw new Error('Request timed out');
+    }
+    throw new Error('URL unreachable');
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function validateImageUrl(url: string): Promise<ImageValidationResult> {
+  let response = await requestImage(url, 'HEAD');
+
+  if (response.status === 405 || response.status === 501) {
+    response = await requestImage(url, 'GET');
+    await response.body?.cancel();
+  }
+
+  if (!response.ok) {
+    throw new Error(`URL returned HTTP ${response.status}`);
+  }
+
+  const contentType = response.headers.get('content-type')?.split(';', 1)[0].trim().toLowerCase();
+  if (!contentType?.startsWith('image/')) {
+    throw new Error(`Not an image (got ${contentType || 'unknown content type'})`);
+  }
+
+  const contentLength = response.headers.get('content-length');
+  const result: ImageValidationResult = { content_type: contentType };
+  if (contentLength !== null) {
+    const parsedLength = Number(contentLength);
+    if (Number.isFinite(parsedLength)) {
+      result.content_length = parsedLength;
+    }
+  }
+
+  return result;
+}
+
+async function markCompleted(jobId: string, result: ImageValidationResult): Promise<void> {
   await query(
     `UPDATE jobs SET status = 'completed', result = $2, updated_at = now() WHERE id = $1`,
-    [jobId, JSON.stringify({ note: 'simulated processing, no real thumbnail yet' })]
+    [jobId, JSON.stringify(result)]
   );
   await decrementQueueDepth();
 }
 
-async function markFailed(jobId: string, attempts: number, message: string, isFinal: boolean): Promise<void> {
+async function markFailed(jobId: string, message: string, isFinal: boolean): Promise<void> {
   await query(
-    `UPDATE jobs SET status = $4, attempts = $2, error_message = $3, updated_at = now() WHERE id = $1`,
-    [jobId, attempts, message, isFinal ? 'failed' : 'processing']
+    `UPDATE jobs
+     SET status = $2,
+         error_message = $3,
+         next_attempt_at = CASE WHEN $2 = 'pending' THEN now() + interval '180 seconds' ELSE now() END,
+         updated_at = now()
+     WHERE id = $1`,
+    [jobId, isFinal ? 'failed' : 'pending', message]
   );
 
   if (isFinal) {
@@ -80,19 +139,23 @@ async function pollLoop() {
               throw new Error('Simulated failure (force_fail was set in payload)');
             }
 
-            await new Promise((resolve) => setTimeout(resolve, 1000));
-            await markCompleted(job.id);
+            if (typeof job.payload.source_url !== 'string') {
+              throw new Error('URL unreachable');
+            }
+
+            const validationResult = await validateImageUrl(job.payload.source_url);
+            await markCompleted(job.id, validationResult);
             await deleteMessage(message.ReceiptHandle);
             console.log(`Job ${job.id} completed`);
           } catch (err) {
             const errMessage = err instanceof Error ? err.message : 'unknown error';
-            const isFinal = receiveCount >= MAX_RECEIVE_COUNT;
-            await markFailed(job.id, receiveCount, errMessage, isFinal);
+            const isFinal = job.attempts >= job.max_attempts;
+            await markFailed(job.id, errMessage, isFinal);
 
             if (isFinal) {
-              console.error(`Job ${job.id} exhausted all ${MAX_RECEIVE_COUNT} attempts — SQS will move it to the DLQ`);
+              console.error(`Job ${job.id} exhausted all ${job.max_attempts} attempts — SQS will move it to the DLQ`);
             } else {
-              console.warn(`Job ${job.id} failed (attempt ${receiveCount}/${MAX_RECEIVE_COUNT}) — SQS will retry after the visibility timeout: ${errMessage}`);
+              console.warn(`Job ${job.id} failed (attempt ${job.attempts}/${job.max_attempts}) — SQS will retry after the visibility timeout: ${errMessage}`);
             }
             // Deliberately NOT calling deleteMessage here — leaving the message undeleted is what lets
             // SQS make it visible again after the visibility timeout for a retry, and automatically move

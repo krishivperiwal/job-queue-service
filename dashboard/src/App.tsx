@@ -1,10 +1,14 @@
 import { useEffect, useState } from 'react';
+import './App.css';
 
 const API_BASE = 'http://localhost:3000';
 
 interface Job {
   id: string;
   job_type: string;
+  payload: {
+    source_url?: string;
+  };
   status: string;
   attempts: number;
   max_attempts: number;
@@ -18,6 +22,7 @@ function App() {
   const [sourceUrl, setSourceUrl] = useState('https://example.com/cat.jpg');
   const [sizes, setSizes] = useState('128,256');
   const [submitting, setSubmitting] = useState(false);
+  const [copiedJobId, setCopiedJobId] = useState<string | null>(null);
 
 async function fetchJobs() {
   try {
@@ -85,54 +90,115 @@ async function fetchJobs() {
     fetchJobs();
   }
 
+  async function handleDelete(id: string) {
+    await fetch(`${API_BASE}/jobs/${id}`, { method: 'DELETE' });
+    await fetchJobs();
+    fetchQueueDepth();
+  }
+
+  function statusClass(status: string) {
+    return `status-badge status-${status}`;
+  }
+
+  async function copyJobId(id: string) {
+    await navigator.clipboard.writeText(id);
+    setCopiedJobId(id);
+    setTimeout(() => {
+      setCopiedJobId((currentId) => (currentId === id ? null : currentId));
+    }, 1500);
+  }
+
   return (
-    <div style={{ maxWidth: 800, margin: '0 auto', padding: 24, fontFamily: 'sans-serif' }}>
-      <h1>Job Queue Dashboard</h1>
-      <p>Pending in queue: {queueDepth ?? '—'}</p>
-
-      <form onSubmit={handleSubmit} style={{ marginBottom: 32 }}>
+    <main className="dashboard-shell">
+      <header className="dashboard-header">
         <div>
-          <label>Source URL: </label>
-          <input value={sourceUrl} onChange={(e) => setSourceUrl(e.target.value)} style={{ width: 300 }} />
+          <p className="eyebrow">Operations</p>
+          <h1>Job Queue Dashboard</h1>
+          <p className="subtitle">Monitor asynchronous image processing jobs.</p>
         </div>
-        <div>
-          <label>Sizes (comma-separated): </label>
-          <input value={sizes} onChange={(e) => setSizes(e.target.value)} />
+        <div className="queue-stat">
+          <span className="stat-label">Pending in queue</span>
+          <strong>{queueDepth ?? '—'}</strong>
         </div>
-        <button type="submit" disabled={submitting}>
-          {submitting ? 'Submitting...' : 'Submit Job'}
-        </button>
-      </form>
+      </header>
 
-      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-        <thead>
-          <tr>
-            <th style={{ textAlign: 'left' }}>ID</th>
-            <th style={{ textAlign: 'left' }}>Status</th>
-            <th style={{ textAlign: 'left' }}>Attempts</th>
-            <th style={{ textAlign: 'left' }}>Error</th>
-            <th style={{ textAlign: 'left' }}>Created</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody>
-          {jobs.map((job) => (
-            <tr key={job.id} style={{ borderTop: '1px solid #ccc' }}>
-              <td>{job.id.slice(0, 8)}...</td>
-              <td>{job.status}</td>
-              <td>{job.attempts}/{job.max_attempts}</td>
-              <td>{job.error_message ?? '—'}</td>
-              <td>{new Date(job.created_at).toLocaleTimeString()}</td>
-              <td>
-                {job.status === 'failed' && (
-                  <button onClick={() => handleReplay(job.id)}>Replay</button>
-                )}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+      <section className="submit-section">
+        <div className="section-heading">
+          <div>
+            <p className="eyebrow">New job</p>
+            <h2>Submit image thumbnail</h2>
+          </div>
+          <span className="job-type">image_thumbnail</span>
+        </div>
+        <form onSubmit={handleSubmit} className="job-form">
+          <label>
+            Source URL
+            <input value={sourceUrl} onChange={(e) => setSourceUrl(e.target.value)} />
+          </label>
+          <label>
+            Sizes
+            <input value={sizes} onChange={(e) => setSizes(e.target.value)} />
+            <span className="field-hint">Comma-separated pixel sizes</span>
+          </label>
+          <button type="submit" disabled={submitting}>
+            {submitting ? 'Submitting...' : 'Submit job'}
+          </button>
+        </form>
+      </section>
+
+      <section className="jobs-section">
+        <div className="section-heading">
+          <div>
+            <p className="eyebrow">Activity</p>
+            <h2>Recent jobs</h2>
+          </div>
+          <span className="refresh-note">Auto-refreshes every 3 seconds</span>
+        </div>
+
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Source URL</th>
+                <th>Status</th>
+                <th>Attempts</th>
+                <th>Error</th>
+                <th>Created</th>
+                <th><span className="sr-only">Actions</span></th>
+              </tr>
+            </thead>
+            <tbody>
+              {jobs.map((job) => (
+                <tr key={job.id}>
+                  <td className="job-id" title={job.id}>
+                    <button className="copy-id-button" onClick={() => copyJobId(job.id)}>
+                      {job.id}
+                    </button>
+                    {copiedJobId === job.id && <span className="copied-label">Copied</span>}
+                  </td>
+                  <td className="source-url-cell" title={job.payload.source_url ?? 'Source URL unavailable'}>
+                    {job.payload.source_url ?? '—'}
+                  </td>
+                  <td><span className={statusClass(job.status)}>{job.status}</span></td>
+                  <td className="attempts">{job.attempts}/{job.max_attempts}</td>
+                  <td className="error-cell">{job.error_message ?? '—'}</td>
+                  <td>{new Date(job.created_at).toLocaleTimeString()}</td>
+                  <td className="action-cell">
+                    {job.status === 'failed' && (
+                      <button className="replay-button" onClick={() => handleReplay(job.id)}>Replay</button>
+                    )}
+                    {job.status === 'pending' && (
+                      <button className="delete-button" onClick={() => handleDelete(job.id)}>Remove</button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </main>
   );
 }
 

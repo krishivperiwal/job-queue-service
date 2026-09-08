@@ -48,10 +48,39 @@ router.get('/queue-depth', async (_req: Request, res: Response) => {
 
 router.get('/jobs', async (_req: Request, res: Response) => {
   const rows = await query(
-    `SELECT id, job_type, status, attempts, max_attempts, error_message, created_at, updated_at
+    `SELECT id, job_type, payload, status, attempts, max_attempts, error_message, created_at, updated_at
      FROM jobs ORDER BY created_at DESC LIMIT 50`
   );
   res.json(rows);
+});
+
+router.delete('/jobs/:id', async (req: Request, res: Response) => {
+  const { id } = req.params;
+
+  if (Array.isArray(id)) {
+    return res.status(400).json({ error: 'invalid_job_id' });
+  }
+
+  const deletedRows = await query<{ id: string }>(
+    `DELETE FROM jobs WHERE id = $1 AND status = 'pending' RETURNING id`,
+    [id]
+  );
+
+  if (deletedRows.length === 0) {
+    const existingRows = await query<{ status: string }>(
+      `SELECT status FROM jobs WHERE id = $1`,
+      [id]
+    );
+
+    if (existingRows.length === 0) {
+      return res.status(404).json({ error: 'job_not_found' });
+    }
+
+    return res.status(400).json({ error: 'only_pending_jobs_can_be_deleted' });
+  }
+
+  await redis.decr('jobs:pending_count');
+  return res.json({ deleted: true, id });
 });
 
 router.post('/jobs/:id/replay', async (req: Request, res: Response) => {
