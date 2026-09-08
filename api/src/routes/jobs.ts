@@ -61,8 +61,10 @@ router.delete('/jobs/:id', async (req: Request, res: Response) => {
     return res.status(400).json({ error: 'invalid_job_id' });
   }
 
-  const deletedRows = await query<{ id: string }>(
-    `DELETE FROM jobs WHERE id = $1 AND status = 'pending' RETURNING id`,
+  const deletedRows = await query<{ id: string; status: string }>(
+    `DELETE FROM jobs
+     WHERE id = $1 AND status IN ('pending', 'completed', 'failed')
+     RETURNING id, status`,
     [id]
   );
 
@@ -76,10 +78,12 @@ router.delete('/jobs/:id', async (req: Request, res: Response) => {
       return res.status(404).json({ error: 'job_not_found' });
     }
 
-    return res.status(400).json({ error: 'only_pending_jobs_can_be_deleted' });
+    return res.status(400).json({ error: 'job_is_still_processing' });
   }
 
-  await redis.decr('jobs:pending_count');
+  if (deletedRows[0].status === 'pending') {
+    await redis.decr('jobs:pending_count');
+  }
   return res.json({ deleted: true, id });
 });
 

@@ -23,6 +23,7 @@ function App() {
   const [sizes, setSizes] = useState('128,256');
   const [submitting, setSubmitting] = useState(false);
   const [copiedJobId, setCopiedJobId] = useState<string | null>(null);
+  const [expandedUrlJobId, setExpandedUrlJobId] = useState<string | null>(null);
 
 async function fetchJobs() {
   try {
@@ -177,20 +178,28 @@ async function fetchJobs() {
                     </button>
                     {copiedJobId === job.id && <span className="copied-label">Copied</span>}
                   </td>
-                  <td className="source-url-cell" title={job.payload.source_url ?? 'Source URL unavailable'}>
-                    {job.payload.source_url ?? '—'}
+                  <td className="source-url-cell">
+                    <button
+                      className={`source-url-button${expandedUrlJobId === job.id ? ' expanded' : ''}`}
+                      title={job.payload.source_url ?? 'Source URL unavailable'}
+                      onClick={() => setExpandedUrlJobId((currentId) => currentId === job.id ? null : job.id)}
+                    >
+                      {job.payload.source_url ?? '—'}
+                    </button>
                   </td>
                   <td><span className={statusClass(job.status)}>{job.status}</span></td>
                   <td className="attempts">{job.attempts}/{job.max_attempts}</td>
                   <td className="error-cell">{job.error_message ?? '—'}</td>
                   <td>{new Date(job.created_at).toLocaleTimeString()}</td>
                   <td className="action-cell">
-                    {job.status === 'failed' && (
-                      <button className="replay-button" onClick={() => handleReplay(job.id)}>Replay</button>
-                    )}
-                    {job.status === 'pending' && (
-                      <button className="delete-button" onClick={() => handleDelete(job.id)}>Remove</button>
-                    )}
+                    <div className="action-buttons">
+                      {job.status === 'failed' && (
+                        <button className="replay-button" onClick={() => handleReplay(job.id)}>Replay</button>
+                      )}
+                      {job.status !== 'processing' && (
+                        <button className="delete-button" onClick={() => handleDelete(job.id)}>Remove</button>
+                      )}
+                    </div>
                   </td>
                 </tr>
               ))}
