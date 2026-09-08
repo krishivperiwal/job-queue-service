@@ -47,6 +47,7 @@ Distributed TypeScript job-processing system for submitting, queueing, retrying,
 - Worker's poll loop wraps message handling in try/catch so a transient AWS/network failure doesn't silently kill the polling process
 - Malformed SQS message bodies are caught, logged, and deleted rather than crashing message handling
 - Both services validate required environment variables at startup and exit immediately with a clear error if any are missing, instead of failing silently on first use
+- Reconciler recovers both orphaned `pending` jobs (DB insert succeeded, SQS publish failed) and stale `processing` jobs (worker crashed mid-job), with staleness thresholds tuned to avoid racing SQS's own visibility-timeout retries
 
 ## Run Locally
 
@@ -84,7 +85,7 @@ The dashboard runs at `http://localhost:5173` and the API runs at `http://localh
 
 ## Known Limitations
 
-- Job validates that the source URL is reachable and points to an image, but does not download, resize, or store actual thumbnails
+- Job validates that the source URL is reachable and points to an image (via HEAD/GET check), but does not download, resize, or store actual thumbnails
 - No authentication, authorization, or rate limiting
 - No automated tests
 - No production observability (metrics, structured logging, alerting)
