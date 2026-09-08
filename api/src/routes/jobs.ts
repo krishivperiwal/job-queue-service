@@ -36,6 +36,7 @@ router.post('/jobs', async (req: Request, res: Response) => {
   );
 
   await enqueueJob(id);
+  await redis.incr('jobs:pending_count');
 
   return res.status(201).json(rows[0]);
 });
