@@ -84,7 +84,7 @@ The dashboard runs at `http://localhost:5173` and the API runs at `http://localh
 
 ## Known Limitations
 
-- Thumbnail generation is currently simulated (no real image downloading, resizing, or storage yet)
+- Job validates that the source URL is reachable and points to an image, but does not download, resize, or store actual thumbnails
 - No authentication, authorization, or rate limiting
 - No automated tests
 - No production observability (metrics, structured logging, alerting)
